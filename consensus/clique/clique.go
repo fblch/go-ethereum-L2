@@ -43,6 +43,7 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/holiman/uint256"
 	"golang.org/x/crypto/sha3"
 )
 
@@ -195,6 +196,13 @@ func New(config *params.CliqueConfig, db ethdb.Database) *Clique {
 	if conf.Epoch == 0 {
 		conf.Epoch = epochLength
 	}
+	// ADDED by Jakub Pajek BEG (clique static block rewards)
+	if blockReward, overflow := uint256.FromBig(conf.BlockReward); blockReward == nil ||
+		overflow || blockReward.Cmp(uint256.NewInt(0)) <= 0 || conf.Beneficiary == (common.Address{}) {
+		conf.BlockReward = nil
+		conf.Beneficiary = common.Address{}
+	}
+	// ADDED by Jakub Pajek END (clique static block rewards)
 	// Allocate the snapshot caches and create the engine
 	recents := lru.NewCache[common.Hash, *Snapshot](inmemorySnapshots)
 	signatures := lru.NewCache[common.Hash, common.Address](inmemorySignatures)
@@ -578,14 +586,15 @@ func (c *Clique) Prepare(chain consensus.ChainHeaderReader, header *types.Header
 	return nil
 }
 
-// Finalize implements consensus.Engine. There is no post-transaction
-// consensus rules in clique, do nothing here.
+// Finalize implements consensus.Engine, accumulating the block rewards.
 func (c *Clique) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, withdrawals []*types.Withdrawal) {
-	// No block rewards in PoA, so the state remains as is
+	// ADDED by Jakub Pajek (clique static block rewards)
+	// Accumulate any block rewards
+	c.accumulateRewards(chain.Config(), state, header, uncles)
 }
 
-// FinalizeAndAssemble implements consensus.Engine, ensuring no uncles are set,
-// nor block rewards given, and returns the final block.
+// FinalizeAndAssemble implements consensus.Engine, accumulating the block rewards,
+// setting the final state and assembling the block.
 func (c *Clique) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt, withdrawals []*types.Withdrawal) (*types.Block, error) {
 	if len(withdrawals) > 0 {
 		return nil, errors.New("clique does not support withdrawals")
@@ -598,6 +607,17 @@ func (c *Clique) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *
 
 	// Assemble and return the final block for sealing.
 	return types.NewBlock(header, txs, nil, receipts, trie.NewStackTrie(nil)), nil
+}
+
+// ADDED by Jakub Pajek (clique static block rewards)
+// AccumulateRewards credits the beneficiary account with the mining
+// reward. The total reward consists of the static block reward only.
+func (c *Clique) accumulateRewards(_ *params.ChainConfig, state *state.StateDB, _ *types.Header, _ []*types.Header) {
+	// Accumulate the rewards for the beneficiary
+	if blockReward, overflow := uint256.FromBig(c.config.BlockReward); blockReward != nil &&
+		!overflow && blockReward.Cmp(uint256.NewInt(0)) > 0 && c.config.Beneficiary != (common.Address{}) {
+		state.AddBalance(c.config.Beneficiary, blockReward)
+	}
 }
 
 // Authorize injects a private key into the consensus engine to mint new blocks

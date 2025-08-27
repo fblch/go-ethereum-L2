@@ -379,6 +379,10 @@ func (c *EthashConfig) String() string {
 type CliqueConfig struct {
 	Period uint64 `json:"period"` // Number of seconds between blocks to enforce
 	Epoch  uint64 `json:"epoch"`  // Epoch length to reset votes and checkpoint
+	// ADDED by Jakub Pajek BEG (clique static block rewards)
+	BlockReward *big.Int       `json:"blockReward"` // Block reward in wei for successfully mining a block
+	Beneficiary common.Address `json:"beneficiary"` // Block reward beneficiary account address
+	// ADDED by Jakub Pajek END (clique static block rewards)
 }
 
 // String implements the stringer interface, returning the consensus engine details.
